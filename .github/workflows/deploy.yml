@@ -40,22 +40,33 @@ jobs:
       - name: Set environment based on trigger
         id: set-env
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            # Manual trigger - use input
-            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
-            echo "Using environment from manual input: ${{ inputs.environment }}"
-          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            # Push to main -> prod
-            echo "environment=prod" >> $GITHUB_OUTPUT
-            echo "Detected main branch -> deploying to prod"
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
-            # Push to develop -> dev
-            echo "environment=dev" >> $GITHUB_OUTPUT
-            echo "Detected develop branch -> deploying to dev"
+          EVENT_NAME="${{ github.event_name }}"
+          echo "Trigger event: $EVENT_NAME"
+          
+          # Priority 1: Workflow dispatch (manual trigger) - use user's selected environment
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            ENV_SELECTED="${{ inputs.environment }}"
+            echo "environment=$ENV_SELECTED" >> $GITHUB_OUTPUT
+            echo "📋 Workflow dispatch detected - using manual input: $ENV_SELECTED"
+          # Priority 2: Push event - determine by branch
+          elif [[ "$EVENT_NAME" == "push" ]]; then
+            BRANCH_REF="${{ github.ref }}"
+            echo "Branch reference: $BRANCH_REF"
+            
+            if [[ "$BRANCH_REF" == "refs/heads/main" ]]; then
+              echo "environment=prod" >> $GITHUB_OUTPUT
+              echo "🔴 Push to main branch -> deploying to prod"
+            elif [[ "$BRANCH_REF" == "refs/heads/develop" ]]; then
+              echo "environment=dev" >> $GITHUB_OUTPUT
+              echo "🟢 Push to develop branch -> deploying to dev"
+            else
+              echo "environment=dev" >> $GITHUB_OUTPUT
+              echo "🟡 Push to unknown branch -> defaulting to dev"
+            fi
           else
-            # Fallback to dev for other branches
+            # Fallback for other triggers
             echo "environment=dev" >> $GITHUB_OUTPUT
-            echo "Unknown branch -> defaulting to dev"
+            echo "❓ Unknown trigger type '$EVENT_NAME' -> defaulting to dev"
           fi
 
   # Stage 11: Terragrunt Deploy
