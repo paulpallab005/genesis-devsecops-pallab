@@ -17,7 +17,7 @@ dependency "compute" {
     lambda_function_name = "mock-lambda-function"
     lambda_function_arn  = "arn:aws:lambda:us-east-1:123456789012:function:mock-function"
   }
-  mock_outputs_allowed_terraform_commands = ["validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
 }
 
 inputs = {
