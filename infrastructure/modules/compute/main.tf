@@ -108,14 +108,6 @@ resource "aws_lambda_function_url" "api" {
   }
 }
 
-# Resource-based policy to allow public invocation (required even with authorization_type = "NONE")
-resource "aws_lambda_permission" "function_url_public" {
-  statement_id           = "AllowPublicFunctionUrl"
-  action                 = "lambda:InvokeFunctionUrl"
-  function_name          = aws_lambda_function.api.function_name
-  principal              = "*"
-}
-
 # CloudWatch Log Group for Lambda (explicit creation for control)
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${aws_lambda_function.api.function_name}"
