@@ -152,14 +152,16 @@ jobs:
           IMAGE_TAG="${ENVIRONMENT}-${BRANCH_NAME}-${SHORT_SHA}"
           IMAGE_URI="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}"
           
-          # Tag and push with single unique tag
-          echo "📦 Tagging image as: $IMAGE_TAG"
+          # Tag and push both the unique tag and latest
+          echo "📦 Tagging image as: $IMAGE_TAG and latest"
           docker tag genesis-api:${{ github.sha }} $IMAGE_URI:$IMAGE_TAG
+          docker tag genesis-api:${{ github.sha }} $IMAGE_URI:latest
           
           echo "🚀 Pushing to ECR..."
           docker push $IMAGE_URI:$IMAGE_TAG
+          docker push $IMAGE_URI:latest
           
-          echo "✓ Image pushed to ECR"
+          echo "✓ Image pushed to ECR with tags: $IMAGE_TAG, latest"
 
       - name: Terragrunt Init
         working-directory: infrastructure/environments/${{ env.ENVIRONMENT }}
