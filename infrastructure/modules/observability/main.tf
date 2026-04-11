@@ -162,7 +162,7 @@ resource "aws_cloudwatch_dashboard" "api" {
         properties = {
           metrics = [
             ["AWS/Lambda", "ConcurrentExecutions", { stat = "Maximum", label = "Concurrent Executions" }]
-          }
+          ]
           view    = "timeSeries"
           stacked = false
           region  = var.aws_region
