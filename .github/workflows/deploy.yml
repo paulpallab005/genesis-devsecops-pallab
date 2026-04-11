@@ -123,30 +123,20 @@ jobs:
             docker login --username AWS --password-stdin \
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
           
-          # Generate meaningful tags
+          # Generate unique tag: environment-branch-short_sha
           SHORT_SHA="${{ github.sha }}" && SHORT_SHA=${SHORT_SHA:0:7}
           BRANCH_NAME="${{ github.ref_name }}"
+          IMAGE_TAG="${ENVIRONMENT}-${BRANCH_NAME}-${SHORT_SHA}"
           IMAGE_URI="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}"
           
-          # Tag images with meaningful identifiers
-          echo "📦 Tagging image with meaningful tags..."
-          docker tag genesis-api:${{ github.sha }} $IMAGE_URI:${ENVIRONMENT}-${BRANCH_NAME}
-          docker tag genesis-api:${{ github.sha }} $IMAGE_URI:${ENVIRONMENT}-${SHORT_SHA}
-          docker tag genesis-api:${{ github.sha }} $IMAGE_URI:${ENVIRONMENT}-latest
-          docker tag genesis-api:${{ github.sha }} $IMAGE_URI:${{ github.sha }}
+          # Tag and push with single unique tag
+          echo "📦 Tagging image as: $IMAGE_TAG"
+          docker tag genesis-api:${{ github.sha }} $IMAGE_URI:$IMAGE_TAG
           
-          # Push all tags to ECR
           echo "🚀 Pushing to ECR..."
-          docker push $IMAGE_URI:${ENVIRONMENT}-${BRANCH_NAME}
-          docker push $IMAGE_URI:${ENVIRONMENT}-${SHORT_SHA}
-          docker push $IMAGE_URI:${ENVIRONMENT}-latest
-          docker push $IMAGE_URI:${{ github.sha }}
+          docker push $IMAGE_URI:$IMAGE_TAG
           
-          echo "✓ Image pushed to ECR with tags:"
-          echo "  - ${ENVIRONMENT}-${BRANCH_NAME} (e.g., dev-develop)"
-          echo "  - ${ENVIRONMENT}-${SHORT_SHA} (e.g., dev-8a6c5d9)"
-          echo "  - ${ENVIRONMENT}-latest"
-          echo "  - ${{ github.sha }} (full commit SHA)"
+          echo "✓ Image pushed to ECR"
 
       - name: Terragrunt Init
         working-directory: infrastructure/environments/${{ env.ENVIRONMENT }}
@@ -162,16 +152,21 @@ jobs:
 
       - name: Update Lambda function code
         run: |
-          # Update Lambda with new image (using environment-based tag)
+          # Construct the image tag (must match what was pushed)
+          SHORT_SHA="${{ github.sha }}" && SHORT_SHA=${SHORT_SHA:0:7}
+          BRANCH_NAME="${{ github.ref_name }}"
+          IMAGE_TAG="${ENVIRONMENT}-${BRANCH_NAME}-${SHORT_SHA}"
+          
+          # Update Lambda with new image
           aws lambda update-function-code \
             --function-name genesis-api-${ENVIRONMENT}-api \
-            --image-uri ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${ENVIRONMENT}-latest
+            --image-uri ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${IMAGE_TAG}
           
           # Wait for update to complete
           aws lambda wait function-updated \
             --function-name genesis-api-${ENVIRONMENT}-api
           
-          echo "✓ Lambda function updated with latest ${ENVIRONMENT} image"
+          echo "✓ Lambda function updated with image: $IMAGE_TAG"
 
       - name: Get Lambda function URL
         id: outputs
