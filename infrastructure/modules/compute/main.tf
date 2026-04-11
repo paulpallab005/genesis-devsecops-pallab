@@ -108,41 +108,13 @@ resource "aws_lambda_function_url" "api" {
   }
 }
 
-# Resource-based policy for public Lambda Function URL access
-resource "aws_lambda_resource_based_policy" "function_url_public" {
-  function_name = aws_lambda_function.api.function_name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "AllowPublicFunctionUrl"
-        Effect = "Allow"
-        Principal = {
-          Service = "lambda.amazonaws.com"
-        }
-        Action = "lambda:InvokeFunctionUrl"
-        Resource = "${aws_lambda_function_url.api.function_arn}/*"
-        Condition = {
-          StringEquals = {
-            "lambda:FunctionUrlAuthType" = "NONE"
-          }
-        }
-      },
-      {
-        Sid    = "AllowPublicInvoke"
-        Effect = "Allow"
-        Principal = "*"
-        Action = "lambda:InvokeFunctionUrl"
-        Resource = "${aws_lambda_function_url.api.function_arn}/*"
-        Condition = {
-          StringEquals = {
-            "lambda:FunctionUrlAuthType" = "NONE"
-          }
-        }
-      }
-    ]
-  })
+# Allow public access to Lambda Function URL
+resource "aws_lambda_permission" "allow_function_url" {
+  statement_id       = "AllowFunctionUrlInvoke"
+  action             = "lambda:InvokeFunctionUrl"
+  function_name      = aws_lambda_function.api.function_name
+  principal          = "*"
+  source_arn         = "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function-url/${aws_lambda_function.api.function_name}/*"
 }
 
 # CloudWatch Log Group for Lambda (explicit creation for control)
