@@ -72,7 +72,6 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = {
       ENVIRONMENT = var.environment
-      AWS_REGION  = var.aws_region
       LOG_LEVEL   = var.environment == "prod" ? "INFO" : "DEBUG"
     }
   }
