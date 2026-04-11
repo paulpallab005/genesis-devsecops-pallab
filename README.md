@@ -200,12 +200,11 @@ Once these flaws are committed to a PR:
 | **Phase 8** | DR Design Document | ✅ Complete (4h RTO, numbered runbook) |
 | **Phase 9** | IAM Validation | 📝 Requires AWS account or simulation mock |
 | **Phase 10** | Drift Detection Design | ✅ Complete (nightly Terragrunt plan, SLAs) |
-| **Phase 11** | Documentation & README Updates | 🔄 In Progress |
-| **Phase 12** | AI Usage Log Completion | 🔄 In Progress (7/8 minimum entries) |
+| **Phase 11** | Documentation & README Updates | ✅ Complete (README updated for pipeline, OIDC, and security documentation) |
+| **Phase 12** | AI Usage Log Completion | ✅ Complete (10 entries, all mandatory categories covered) |
 | **Phase 13** | Video Walkthrough | 📝 Planned (5-7 minute Loom recording) |
 | **Phase 14** | Final Submission Package | 📝 Planned (zip all deliverables) |
 
-**Estimated Progress**: 85% complete (110/130 marks worth of work delivered)
 
 ---
 
