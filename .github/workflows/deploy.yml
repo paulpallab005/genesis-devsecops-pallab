@@ -82,27 +82,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-
-      - name: Determine whether to build Docker image
-        id: image-check
-        run: |
-          set -e
-          echo "Checking for image-impacting changes..."
-
-          if git rev-parse HEAD^ >/dev/null 2>&1; then
-            if git diff --quiet HEAD^ -- app; then
-              echo "build=false" >> $GITHUB_OUTPUT
-              echo "No image-impacting changes detected in app/; skipping Docker build and push."
-            else
-              echo "build=true" >> $GITHUB_OUTPUT
-              echo "Image-impacting changes detected; will build and push Docker image."
-            fi
-          else
-            echo "build=true" >> $GITHUB_OUTPUT
-            echo "No parent commit available; building Docker image by default."
-          fi
 
       - name: Display deployment target
         run: |
@@ -134,12 +113,10 @@ jobs:
           terragrunt-version: '0.48.0'
 
       - name: Build Docker image
-        if: steps.image-check.outputs.build == 'true'
         working-directory: app
         run: docker build -t genesis-api:${{ github.sha }} .
 
       - name: Login to Amazon ECR and push image
-        if: steps.image-check.outputs.build == 'true'
         run: |
           # Login to ECR
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
@@ -176,7 +153,6 @@ jobs:
         run: terragrunt run-all apply --terragrunt-non-interactive -auto-approve
 
       - name: Update Lambda function code
-        if: steps.image-check.outputs.build == 'true'
         run: |
           # Construct the image tag (must match what was pushed)
           SHORT_SHA="${{ github.sha }}" && SHORT_SHA=${SHORT_SHA:0:7}
