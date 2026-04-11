@@ -1,0 +1,276 @@
+name: Deploy Pipeline
+
+# Deployment pipeline (Stages 11-12)
+# Runs on push to main (prod) or develop (dev) branches
+# Uses OIDC for AWS authentication (no static credentials)
+# Environment is determined dynamically based on branch or manual input
+
+on:
+  push:
+    branches: 
+      - main      # Deploy to prod
+      - develop   # Deploy to dev
+  workflow_dispatch:  # Allow manual triggers
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+        default: dev
+
+permissions:
+  id-token: write  # Required for OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  # Determine target environment dynamically
+  set-environment:
+    name: "Determine Environment"
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+    steps:
+      - name: Set environment based on trigger
+        id: set-env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            # Manual trigger - use input
+            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "Using environment from manual input: ${{ inputs.environment }}"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # Push to main -> prod
+            echo "environment=prod" >> $GITHUB_OUTPUT
+            echo "Detected main branch -> deploying to prod"
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            # Push to develop -> dev
+            echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "Detected develop branch -> deploying to dev"
+          else
+            # Fallback to dev for other branches
+            echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "Unknown branch -> defaulting to dev"
+          fi
+
+  # Stage 11: Terragrunt Deploy
+  terragrunt-deploy:
+    name: "Stage 11: Terragrunt Deploy"
+    runs-on: ubuntu-latest
+    needs: set-environment
+    environment: ${{ needs.set-environment.outputs.environment }}  # GitHub environment for approval gates
+    outputs:
+      lambda_url: ${{ steps.outputs.outputs.lambda_url }}
+    env:
+      ENVIRONMENT: ${{ needs.set-environment.outputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Display deployment target
+        run: |
+          echo "🚀 Deploying to environment: ${{ env.ENVIRONMENT }}"
+          echo "📍 AWS Region: ${{ env.AWS_REGION }}"
+          echo "🔖 Commit SHA: ${{ github.sha }}"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/genesis-api-${{ env.ENVIRONMENT }}-github-actions-role
+          role-session-name: GitHubActions-Deploy-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+          echo "✓ Authenticated via OIDC (no AWS access keys required)"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.5.0'
+
+      - name: Setup Terragrunt
+        uses: autero1/action-terragrunt@v3
+        with:
+          terragrunt-version: '0.48.0'
+
+      - name: Build Docker image
+        working-directory: app
+        run: docker build -t genesis-api:${{ github.sha }} .
+
+      - name: Login to Amazon ECR and push image
+        run: |
+          # Login to ECR
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
+            docker login --username AWS --password-stdin \
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+          
+          # Tag for ECR
+          docker tag genesis-api:${{ github.sha }} \
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
+          docker tag genesis-api:${{ github.sha }} \
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:latest
+          
+          # Push to ECR
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
+          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:latest
+          
+          echo "✓ Image pushed to ECR"
+
+      - name: Terragrunt Init
+        working-directory: infrastructure/environments/${{ env.ENVIRONMENT }}
+        run: terragrunt run-all init --terragrunt-non-interactive
+
+      - name: Terragrunt Plan
+        working-directory: infrastructure/environments/${{ env.ENVIRONMENT }}
+        run: terragrunt run-all plan --terragrunt-non-interactive
+
+      - name: Terragrunt Apply
+        working-directory: infrastructure/environments/${{ env.ENVIRONMENT }}
+        run: terragrunt run-all apply --terragrunt-non-interactive --terragrunt-auto-approve
+
+      - name: Update Lambda function code
+        run: |
+          # Update Lambda with new image
+          aws lambda update-function-code \
+            --function-name genesis-api-${ENVIRONMENT}-api \
+            --image-uri ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
+          
+          # Wait for update to complete
+          aws lambda wait function-updated \
+            --function-name genesis-api-${ENVIRONMENT}-api
+          
+          echo "✓ Lambda function updated"
+
+      - name: Get Lambda function URL
+        id: outputs
+        run: |
+          LAMBDA_URL=$(aws lambda get-function-url-config \
+            --function-name genesis-api-${ENVIRONMENT}-api \
+            --query 'FunctionUrl' \
+            --output text)
+          echo "lambda_url=$LAMBDA_URL" >> $GITHUB_OUTPUT
+          echo "Lambda URL: $LAMBDA_URL"
+
+  # Stage 12: Smoke Test
+  smoke-test:
+    name: "Stage 12: Smoke Test"
+    runs-on: ubuntu-latest
+    needs: [set-environment, terragrunt-deploy]
+    env:
+      ENVIRONMENT: ${{ needs.set-environment.outputs.environment }}
+    steps:
+      - name: Wait for Lambda to be ready
+        run: sleep 10
+
+      - name: Test GET /health endpoint
+        run: |
+          LAMBDA_URL="${{ needs.terragrunt-deploy.outputs.lambda_url }}"
+          echo "Testing: ${LAMBDA_URL}health"
+          
+          RESPONSE=$(curl -s -w "\n%{http_code}" "${LAMBDA_URL}health")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Health check failed - expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          
+          # Verify response structure
+          if echo "$BODY" | jq -e '.status == "ok"' > /dev/null; then
+            echo "✅ Health check passed - status is ok"
+          else
+            echo "❌ Health check response invalid"
+            exit 1
+          fi
+          
+          VERSION=$(echo "$BODY" | jq -r '.version')
+          ENV=$(echo "$BODY" | jq -r '.env')
+          echo "API Version: $VERSION"
+          echo "Environment: $ENV"
+
+      - name: Test POST /events endpoint
+        run: |
+          LAMBDA_URL="${{ needs.terragrunt-deploy.outputs.lambda_url }}"
+          echo "Testing: ${LAMBDA_URL}events"
+          
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${LAMBDA_URL}events" \
+            -H "Content-Type: application/json" \
+            -d '{"event_type":"deployment","description":"Automated deployment smoke test"}')
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          
+          if [ "$HTTP_CODE" != "201" ]; then
+            echo "❌ Event creation failed - expected 201, got $HTTP_CODE"
+            exit 1
+          fi
+          
+          EVENT_ID=$(echo "$BODY" | jq -r '.id')
+          echo "✅ Event created with ID: $EVENT_ID"
+          
+          # Save event ID for next test
+          echo "EVENT_ID=$EVENT_ID" >> $GITHUB_ENV
+
+      - name: Test GET /events/{id} endpoint
+        run: |
+          LAMBDA_URL="${{ needs.terragrunt-deploy.outputs.lambda_url }}"
+          EVENT_ID="${{ env.EVENT_ID }}"
+          echo "Testing: ${LAMBDA_URL}events/${EVENT_ID}"
+          
+          RESPONSE=$(curl -s -w "\n%{http_code}" "${LAMBDA_URL}events/${EVENT_ID}")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
+          
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Event retrieval failed - expected 200, got $HTTP_CODE"
+            exit 1
+          fi
+          
+          echo "✅ Event retrieved successfully"
+
+      - name: Smoke test summary
+        run: |
+          echo "## 🎉 Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment**: ${ENVIRONMENT}" >> $GITHUB_STEP_SUMMARY
+          echo "**Lambda URL**: ${{ needs.terragrunt-deploy.outputs.lambda_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Smoke Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ GET /health → 200 OK" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ POST /events → 201 Created" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ GET /events/{id} → 200 OK" >> $GITHUB_STEP_SUMMARY
+
+  # Deployment notification (optional)
+  notify:
+    name: "Deployment Notification"
+    runs-on: ubuntu-latest
+    needs: [set-environment, terragrunt-deploy, smoke-test]
+    env:
+      ENVIRONMENT: ${{ needs.set-environment.outputs.environment }}
+    if: always()
+    steps:
+      - name: Notify deployment status
+        run: |
+          if [[ "${{ needs.smoke-test.result }}" == "success" ]]; then
+            echo "✅ Deployment to ${ENVIRONMENT} completed successfully"
+          else
+            echo "❌ Deployment to ${ENVIRONMENT} failed"
+            exit 1
+          fi

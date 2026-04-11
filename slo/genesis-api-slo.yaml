@@ -1,0 +1,133 @@
+# SLO Definition - Genesis Events API
+
+service:          genesis-events-api
+environment:      dev
+
+## Service Level Indicator (SLI)
+
+sli:
+  type:           availability
+  measurement:    (successful_invocations / total_invocations) * 100
+  datasource:     CloudWatch - AWS/Lambda metrics (Invocations, Errors)
+  query: |
+    # CloudWatch Metrics Insights query for SLI calculation
+    SELECT 
+      SUM(Invocations) as total_invocations,
+      SUM(Errors) as error_count,
+      (SUM(Invocations) - SUM(Errors)) as successful_invocations,
+      ((SUM(Invocations) - SUM(Errors)) / SUM(Invocations)) * 100 as availability_percent
+    FROM SCHEMA("AWS/Lambda", FunctionName)
+    WHERE FunctionName = 'genesis-api-dev-api'
+    GROUP BY FunctionName
+
+## Service Level Objective (SLO)
+
+slo:
+  target_percent:     99.5
+  window:             30d
+  justification: |
+    99.5% availability chosen based on:
+    - Internal operations tool (not customer-facing SaaS requiring 99.9%+)
+    - Dev environment with acceptable tolerance for brief outages
+    - Matches AWS Lambda free tier reliability expectations
+    - Allows ~216 minutes (3.6 hours) of downtime per month for maintenance
+    - Production would target 99.9% (43 minutes/month allowed downtime)
+
+## Error Budget
+
+error_budget:
+  allowed_downtime_minutes:    216
+  calculation: |
+    (1 - 0.995) × 30 days × 24 hours × 60 minutes = 216 minutes/month
+    = 0.5% error rate × 43,200 minutes = 216 minutes
+  
+  burn_rate_alert_threshold:   5
+  burn_rate_explanation: |
+    Burn rate = actual error rate / allowed error rate
+    Normal burn: 0.5% error rate over 30 days
+    5× burn rate: 2.5% error rate (budget consumed in 6 days instead of 30)
+    At 5× burn, 50% of monthly budget consumed in just 3 days → page on-call
+  
+  current_burn_rate:           "<measured after ≥1 hour of traffic>"
+  current_error_budget_consumed: "<percentage, updated hourly>"
+
+## Error Budget Policy
+
+policy:
+  ## When 50% of error budget is consumed (108 minutes used)
+  at_50_percent_budget_consumed:
+    action:       Alert engineering team via Slack
+    escalation:   None - informational only
+    response:     Review error logs, identify patterns
+    freeze:       No deployment freeze
+    review:       Async review in weekly ops meeting
+  
+  ## When 75% of error budget is consumed (162 minutes used)
+  at_75_percent_budget_consumed:
+    action:       Page on-call engineer
+    escalation:   Engineering manager notified
+    response:     Immediate investigation required - root cause analysis
+    freeze:       Recommend deployment freeze for non-critical changes
+    review:       Synchronous review within 24 hours
+    sla:          Identify cause within 4 hours, mitigation plan within 8 hours
+  
+  ## When 100% of error budget is consumed (216 minutes used)
+  at_100_percent_consumed:
+    action:       Incident declared, page on-call + backup
+    escalation:   VP Engineering notified
+    response:     All hands on deck - stop feature work
+    freeze:       HARD deployment freeze - only hotfixes allowed
+    review:       Post-incident review (PIR) within 48 hours
+    sla:          Restore service to <5% error rate within 2 hours
+    consequence:  If budget exhausted early in month,严格 change control until reset
+  
+  ## Review cadence
+  review_cadence:
+    frequency:    Weekly (Monday standup)
+    attendees:    Platform team, SRE, on-call rotation
+    agenda: |
+      - Current error budget status (% consumed, burn rate)
+      - Week-over-week error rate trend
+      - Top 3 error types contributing to budget consumption
+      - Action items from previous week
+      - Preview: planned changes that might impact SLO
+
+## Operational Metadata
+
+owner:            pallab
+last_reviewed:    2026-04-11
+next_review:      2026-04-18  # Weekly review
+slo_start_date:   2026-04-11
+reporting_dashboard: https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=genesis-api-dev-dashboard
+
+## Alert Configuration
+
+alerts:
+  - name: high_burn_rate
+    condition: burn_rate >= 5 for 15 minutes
+    action: Page on-call via SNS -> PagerDuty
+    runbook: docs/runbooks/high-burn-rate.md
+  
+  - name: budget_50_percent
+    condition: error_budget_consumed >= 50%
+    action: Slack notification to #ops-alerts
+    runbook: docs/runbooks/error-budget-review.md
+  
+  - name: budget_75_percent
+    condition: error_budget_consumed >= 75%
+    action: Page on-call, Slack #incident-response
+    runbook: docs/runbooks/error-budget-escalation.md
+
+## Notes
+
+- **SLI Measurement Window**: Calculated every 5 minutes using CloudWatch metric math
+- **Grace Period**: First 7 days after deployment excluded from SLO (burn-in period)
+- **Maintenance Windows**: Scheduled maintenance (off-hours, announced) excluded from SLO
+- **External Dependencies**: AWS Lambda platform availability not excluded (within our control to architect around)
+- **Traffic Requirements**: SLO valid only when traffic ≥10 requests/hour (avoid noise from low traffic)
+
+## Revision History
+
+| Date       | Version | Changes                                      | Author |
+|------------|---------|----------------------------------------------|--------|
+| 2026-04-11 | 1.0     | Initial SLO definition for dev environment   | pallab |

@@ -1,0 +1,15 @@
+# CODEOWNERS file for genesis-devsecops-pallab
+# Require review on GitHub Actions workflow changes
+# This enforces change control on pipeline modifications
+
+# Workflow files require senior engineer review
+/.github/workflows/* @pallab_paul
+
+# Infrastructure changes require review
+/infrastructure/ @pallab_paul
+
+# Security policies require review
+/infrastructure/policies/ @pallab_paul
+
+# SLO definitions require review
+/slo/ @pallab_paul

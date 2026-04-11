@@ -1,0 +1,253 @@
+name: CI Pipeline (PR)
+
+# Main CI pipeline for pull requests
+# Implements fail-fast architecture: security gates block early
+# Stages 1-10 run on every PR
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [feature/*]
+
+# Cancel in-progress runs on new push to same PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  pull-requests: write
+
+jobs:
+  # Stages 1-4: Call reusable security workflow
+  security-scan:
+    name: "Stages 1-4: Security Scan"
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      coverage_threshold: 75
+      python_version: '3.11'
+
+  # Stage 5: Docker Build
+  docker-build:
+    name: "Stage 5: Docker Build"
+    runs-on: ubuntu-latest
+    needs: security-scan  # Depends on all security stages passing
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: genesis-api
+          tags: |
+            type=sha,prefix={{branch}}-
+            type=ref,event=pr
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app
+          file: ./app/Dockerfile
+          push: false  # Don't push on PR, only build
+          tags: genesis-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=docker,dest=/tmp/genesis-api.tar
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/genesis-api.tar
+          retention-days: 1
+
+  # Stage 6: Image Vulnerability Scan (Trivy)
+  image-scan:
+    name: "Stage 6: Image Vulnerability Scan (Trivy)"
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load --input /tmp/genesis-api.tar
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: genesis-api:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'  # Fail pipeline on CRITICAL findings
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Generate Trivy JSON report
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: genesis-api:${{ github.sha }}
+          format: 'json'
+          output: 'trivy-report.json'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+        if: always()
+
+      - name: Upload Trivy report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-report.json
+          retention-days: 30
+        if: always()
+
+  # Stage 7: SBOM Generation (Syft)
+  sbom-generation:
+    name: "Stage 7: SBOM Generation (Syft)"
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load --input /tmp/genesis-api.tar
+
+      - name: Generate SBOM with Syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: genesis-api:${{ github.sha }}
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cyclonedx.json
+          retention-days: 90  # Longer retention for compliance
+
+  # Stage 8: Image Signing (Cosign)
+  image-signing:
+    name: "Stage 8: Image Signing (Cosign)"
+    runs-on: ubuntu-latest
+    needs: [docker-build, image-scan]  # Only sign if scan passes
+    permissions:
+      id-token: write  # Required for keyless signing
+      packages: write
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load --input /tmp/genesis-api.tar
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with Cosign (keyless OIDC)
+        run: |
+          # In PR context, we simulate signing
+          # Actual signing would happen on push to main with ECR
+          echo "✓ Image signing simulated for PR (keyless OIDC would be used in production)"
+          cosign version
+
+  # Stage 9: IaC Lint (tflint)
+  iac-lint:
+    name: "Stage 9: IaC Lint (tflint)"
+    runs-on: ubuntu-latest
+    needs: security-scan  # Can run in parallel with docker stages
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Initialize TFLint
+        working-directory: infrastructure
+        run: tflint --init
+
+      - name: Run TFLint on all modules
+        working-directory: infrastructure/modules
+        run: |
+          for module in */; do
+            echo "Linting $module"
+            (cd "$module" && tflint --format compact)
+          done
+
+  # Stage 10: Checkov Scan (IaC Security)
+  checkov-scan:
+    name: "Stage 10: Checkov Scan (IaC)"
+    runs-on: ubuntu-latest
+    needs: security-scan  # Can run in parallel with docker stages
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infrastructure/modules
+          framework: terraform
+          output_format: json
+          output_file_path: reports/
+          soft_fail: false  # Block on failures
+          quiet: false
+
+      - name: Upload Checkov report
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-report
+          path: reports/results_json.json
+          retention-days: 30
+        if: always()
+
+  # Pipeline Summary
+  pipeline-summary:
+    name: "Pipeline Summary"
+    runs-on: ubuntu-latest
+    needs: [security-scan, docker-build, image-scan, sbom-generation, image-signing, iac-lint, checkov-scan]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 🎯 CI Pipeline Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scan (1-4) | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build (5) | ${{ needs.docker-build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trivy Scan (6) | ${{ needs.image-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SBOM Generation (7) | ${{ needs.sbom-generation.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Signing (8) | ${{ needs.image-signing.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| TFLint (9) | ${{ needs.iac-lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Checkov (10) | ${{ needs.checkov-scan.result }} |" >> $GITHUB_STEP_SUMMARY
