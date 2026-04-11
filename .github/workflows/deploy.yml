@@ -27,6 +27,7 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
 
 jobs:
   # Determine target environment dynamically
@@ -80,7 +81,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/genesis-api-${{ env.ENVIRONMENT }}-github-actions-role
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/genesis-api-${{ env.ENVIRONMENT }}-github-actions-role
           role-session-name: GitHubActions-Deploy-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
 
@@ -108,17 +109,17 @@ jobs:
           # Login to ECR
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
             docker login --username AWS --password-stdin \
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
           
           # Tag for ECR
           docker tag genesis-api:${{ github.sha }} \
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
           docker tag genesis-api:${{ github.sha }} \
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:latest
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:latest
           
           # Push to ECR
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
-          docker push ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:latest
+          docker push ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
+          docker push ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:latest
           
           echo "✓ Image pushed to ECR"
 
@@ -139,7 +140,7 @@ jobs:
           # Update Lambda with new image
           aws lambda update-function-code \
             --function-name genesis-api-${ENVIRONMENT}-api \
-            --image-uri ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
+            --image-uri ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
           
           # Wait for update to complete
           aws lambda wait function-updated \

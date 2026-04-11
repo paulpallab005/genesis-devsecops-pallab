@@ -116,7 +116,7 @@ terragrunt plan
 # Apply the IAM infrastructure
 terragrunt apply
 
-# Save outputs (needed for GitHub Secrets)
+# Save outputs (needed for GitHub Actions variables)
 terragrunt output -json > ../../outputs/iam-outputs.json
 ```
 
@@ -131,20 +131,20 @@ terragrunt output -json > ../../outputs/iam-outputs.json
 
 ---
 
-### Step 4: Configure GitHub Secrets
+### Step 4: Configure GitHub Actions variables
 
-Add required secrets to your GitHub repository:
+Add required repository variables to your GitHub repository:
 
-**Navigate to**: `Settings > Secrets and variables > Actions > New repository secret`
+**Navigate to**: `Settings > Variables > Actions > New repository variable`
 
-| Secret Name | Value | How to Get |
+| Variable Name | Value | How to Get |
 |-------------|-------|-----------|
 | `AWS_ACCOUNT_ID` | Your AWS account ID | `aws sts get-caller-identity --query Account --output text` |
 | `AWS_REGION` | `us-east-1` | Hardcoded (or your preferred region) |
 
 **Note**: The IAM role ARN is constructed dynamically in the workflow:
 ```yaml
-role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/genesis-api-dev-github-actions-role
+role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/genesis-api-dev-github-actions-role
 ```
 
 ---
@@ -169,7 +169,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/genesis-api-dev-github-actions-role
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/genesis-api-dev-github-actions-role
           aws-region: us-east-1
       
       - name: Verify identity
@@ -347,7 +347,7 @@ remote_state {
 - [ ] Create DynamoDB lock table
 - [ ] Update GitHub repository variable in IAM module
 - [ ] Deploy IAM module locally (`terragrunt apply`)
-- [ ] Add `AWS_ACCOUNT_ID` to GitHub Secrets
+- [ ] Add `AWS_ACCOUNT_ID` as a GitHub Actions repository variable
 - [ ] Test OIDC authentication with test workflow
 - [ ] Delete local admin AWS credentials
 - [ ] All future deployments happen via GitHub Actions ✅

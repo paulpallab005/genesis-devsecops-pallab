@@ -113,8 +113,8 @@ aws dynamodb create-table --table-name genesis-terraform-locks --attribute-defin
 # 3. Deploy IAM module locally (one-time)
 cd infrastructure/environments/dev/iam && terragrunt apply
 
-# 4. Add AWS_ACCOUNT_ID to GitHub Secrets
-# Settings > Secrets > New secret: AWS_ACCOUNT_ID = <your-account-id>
+# 4. Add AWS_ACCOUNT_ID as a GitHub repository variable
+# Settings > Variables > Actions > New repository variable: AWS_ACCOUNT_ID = <your-account-id>
 
 # 5. All future deployments via GitHub Actions! 🚀
 git push origin develop  # Triggers automated deployment
