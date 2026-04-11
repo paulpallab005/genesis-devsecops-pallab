@@ -6,7 +6,7 @@ include "env" {
 }
 
 terraform {
-  source = "../../modules//iam"
+  source = "../../../modules//iam"
 }
 
 inputs = {}

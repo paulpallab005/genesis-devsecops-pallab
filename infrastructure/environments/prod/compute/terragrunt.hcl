@@ -6,7 +6,7 @@ include "env" {
 }
 
 terraform {
-  source = "../../modules//compute"
+  source = "../../../modules//compute"
 }
 
 # Dependency on IAM module

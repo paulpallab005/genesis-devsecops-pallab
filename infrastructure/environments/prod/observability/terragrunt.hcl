@@ -6,7 +6,7 @@ include "env" {
 }
 
 terraform {
-  source = "../../modules//observability"
+  source = "../../../modules//observability"
 }
 
 # Dependency on Compute module
