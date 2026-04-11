@@ -99,7 +99,7 @@ resource "aws_lambda_function_url" "api" {
   cors {
     allow_credentials = false
     allow_origins     = ["*"]
-    allow_methods     = ["GET", "POST", "OPTIONS"]
+    allow_methods     = ["GET", "POST"]
     allow_headers     = ["content-type", "x-amz-date", "authorization"]
 # checkov:skip=CKV_AWS_158:KMS encryption not required for application logs in dev. CloudWatch uses AWS-managed encryption at rest by default. KMS adds cost and key management complexity.
 # checkov:skip=CKV_AWS_338:Retention explicitly configured (7 days dev, 30 days prod) which satisfies the intent of the check.
