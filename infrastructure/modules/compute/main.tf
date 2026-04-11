@@ -76,9 +76,6 @@ resource "aws_lambda_function" "api" {
     }
   }
 
-  # Reserved concurrent executions (optional - prevents runaway costs)
-  reserved_concurrent_executions = var.environment == "prod" ? 10 : 5
-
   tags = {
     Name        = "${var.project}-${var.environment}-lambda"
     Environment = var.environment
