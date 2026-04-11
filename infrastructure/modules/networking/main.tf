@@ -10,19 +10,3 @@
 
 # Placeholder - no resources created for now
 # Lambda will use AWS default networking
-
-# Outputs (empty for now, add if VPC is implemented)
-output "vpc_id" {
-  description = "VPC ID (placeholder)"
-  value       = null
-}
-
-output "private_subnet_ids" {
-  description = "Private subnet IDs for Lambda (placeholder)"
-  value       = []
-}
-
-output "security_group_id" {
-  description = "Security group ID for Lambda (placeholder)"
-  value       = null
-}
