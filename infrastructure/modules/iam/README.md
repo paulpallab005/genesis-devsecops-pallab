@@ -26,7 +26,7 @@ module "iam" {
   project       = "genesis-api"
   owner         = "pallab"
   
-  github_org    = "your-github-org"
+  github_org    = "paulpallab005"
   github_repo   = "genesis-devsecops-pallab"
   github_branch = "main"
 }

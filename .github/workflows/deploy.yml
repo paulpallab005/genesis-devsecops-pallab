@@ -133,7 +133,7 @@ jobs:
 
       - name: Terragrunt Apply
         working-directory: infrastructure/environments/${{ env.ENVIRONMENT }}
-        run: terragrunt run-all apply --terragrunt-non-interactive --terragrunt-auto-approve
+        run: terragrunt run-all apply --terragrunt-non-interactive -auto-approve
 
       - name: Update Lambda function code
         run: |

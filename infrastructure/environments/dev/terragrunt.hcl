@@ -76,7 +76,7 @@ inputs = {
   environment = "dev"
   
   # GitHub configuration for OIDC
-  github_org    = "pallab_paul"  # Replace with your GitHub username/org
+  github_org    = "paulpallab005"  # Replace with your GitHub username/org
   github_repo   = "genesis-devsecops-pallab"
   github_branch = "main"
   
