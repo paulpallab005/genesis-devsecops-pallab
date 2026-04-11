@@ -16,7 +16,7 @@ dependency "iam" {
   mock_outputs = {
     lambda_execution_role_arn = "arn:aws:iam::123456789012:role/mock-lambda-role"
   }
-  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
+  mock_outputs_allowed_terraform_commands = ["init", "validate", "plan", "apply"]
 }
 
 inputs = {
