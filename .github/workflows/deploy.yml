@@ -185,18 +185,32 @@ jobs:
     name: "Stage 12: Smoke Test"
     runs-on: ubuntu-latest
     needs: [set-environment, terragrunt-deploy]
+    permissions:
+      id-token: write # Required to fetch OIDC token in this job
+      contents: read
     env:
       ENVIRONMENT: ${{ needs.set-environment.outputs.environment }}
     steps:
       - name: Wait for Lambda to be ready
         run: sleep 10
 
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/genesis-api-${{ env.ENVIRONMENT }}-github-actions-role
+          role-session-name: GitHubActions-SmokeTest-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+
+      - name: Install awscurl
+        run: pip install awscurl
+
       - name: Test GET /health endpoint
         run: |
           LAMBDA_URL="${{ needs.terragrunt-deploy.outputs.lambda_url }}"
           echo "Testing: ${LAMBDA_URL}health"
           
-          RESPONSE=$(curl -s -w "\n%{http_code}" "${LAMBDA_URL}health")
+          RESPONSE=$(awscurl -s -w "\n%{http_code}" --service lambda --region ${{ env.AWS_REGION }} "${LAMBDA_URL}health")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
           BODY=$(echo "$RESPONSE" | head -n -1)
           
@@ -226,7 +240,7 @@ jobs:
           LAMBDA_URL="${{ needs.terragrunt-deploy.outputs.lambda_url }}"
           echo "Testing: ${LAMBDA_URL}events"
           
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${LAMBDA_URL}events" \
+          RESPONSE=$(awscurl -s -w "\n%{http_code}" -X POST --service lambda --region ${{ env.AWS_REGION }} "${LAMBDA_URL}events" \
             -H "Content-Type: application/json" \
             -d '{"event_type":"deployment","description":"Automated deployment smoke test"}')
           
@@ -253,7 +267,7 @@ jobs:
           EVENT_ID="${{ env.EVENT_ID }}"
           echo "Testing: ${LAMBDA_URL}events/${EVENT_ID}"
           
-          RESPONSE=$(curl -s -w "\n%{http_code}" "${LAMBDA_URL}events/${EVENT_ID}")
+          RESPONSE=$(awscurl -s -w "\n%{http_code}" --service lambda --region ${{ env.AWS_REGION }} "${LAMBDA_URL}events/${EVENT_ID}")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
           BODY=$(echo "$RESPONSE" | head -n -1)
           

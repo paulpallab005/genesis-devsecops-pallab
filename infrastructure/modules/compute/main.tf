@@ -53,13 +53,13 @@ resource "aws_ecr_lifecycle_policy" "app" {
     ]
   })
 }
+
+# Lambda Function
 # checkov:skip=CKV_AWS_50:X-Ray tracing disabled to minimize costs in dev. Enable in production for distributed tracing.
 # checkov:skip=CKV_AWS_117:Lambda intentionally NOT in VPC - no private resources to access (RDS, ElastiCache). VPC adds NAT Gateway cost (~$32/month) and complexity without security benefit.
 # checkov:skip=CKV_AWS_115:Dead letter queue intentionally omitted - will be enforced via custom OPA policy for production. Assessment specifically tests this as bonus policy.
 # checkov:skip=CKV_AWS_173:Environment variables do not contain secrets - only non-sensitive config (ENVIRONMENT, LOG_LEVEL). Secrets fetched from Secrets Manager at runtime.
 # checkov:skip=CKV_AWS_272:Reserved concurrent execution limit set (5 for dev, 10 for prod) - provides cost control while allowing reasonable concurrency.
-
-# Lambda Function
 resource "aws_lambda_function" "api" {
   function_name = "${var.project}-${var.environment}-api"
   role          = var.lambda_execution_role_arn
@@ -86,7 +86,6 @@ resource "aws_lambda_function" "api" {
 
   # Prevent replacement on image_uri changes when using lifecycle
   lifecycle {
-# checkov:skip=CKV_AWS_258:Authorization intentionally set to NONE for dev environment to simplify testing. Production should use AWS_IAM or custom authorizer.
     ignore_changes = [image_uri]
   }
 }
@@ -94,30 +93,21 @@ resource "aws_lambda_function" "api" {
 # Lambda Function URL (for HTTP access without API Gateway)
 resource "aws_lambda_function_url" "api" {
   function_name      = aws_lambda_function.api.function_name
-  authorization_type = "NONE"  # Public access - add auth for production
+  authorization_type = "AWS_IAM"  # Switched to secure IAM auth to bypass SCP block
 
   cors {
-    allow_credentials = false
+    allow_credentials = true      # Must be true for IAM auth
     allow_origins     = ["*"]
     allow_methods     = ["GET", "POST"]
     allow_headers     = ["content-type", "x-amz-date", "authorization"]
-# checkov:skip=CKV_AWS_158:KMS encryption not required for application logs in dev. CloudWatch uses AWS-managed encryption at rest by default. KMS adds cost and key management complexity.
-# checkov:skip=CKV_AWS_338:Retention explicitly configured (7 days dev, 30 days prod) which satisfies the intent of the check.
     expose_headers    = ["date"]
     max_age           = 86400
   }
 }
 
-# Allow public access to Lambda Function URL
-resource "aws_lambda_permission" "allow_function_url" {
-  statement_id           = "AllowFunctionUrlInvokeV2" # Added V2 to force recreation
-  action                 = "lambda:InvokeFunctionUrl"
-  function_name          = aws_lambda_function.api.function_name
-  principal              = "*"
-  function_url_auth_type = "NONE" 
-}
-
 # CloudWatch Log Group for Lambda (explicit creation for control)
+# checkov:skip=CKV_AWS_158:KMS encryption not required for application logs in dev. CloudWatch uses AWS-managed encryption at rest by default. KMS adds cost and key management complexity.
+# checkov:skip=CKV_AWS_338:Retention explicitly configured (7 days dev, 30 days prod) which satisfies the intent of the check.
 resource "aws_cloudwatch_log_group" "lambda" {
   name              = "/aws/lambda/${aws_lambda_function.api.function_name}"
   retention_in_days = var.environment == "prod" ? 30 : 7
