@@ -90,7 +90,7 @@ resource "aws_iam_role_policy" "github_actions_deploy_policy" {
           "ecr:DescribeRepositories",
           "ecr:ListImages"
         ]
-        Resource = "*"
+        Resource = "arn:${data.aws_partition.current.partition}:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/${var.project}-*"
       },
       {
         Sid    = "LambdaUpdatePermissions"
