@@ -10,6 +10,9 @@ on:
     branches: 
       - main      # Deploy to prod
       - develop   # Deploy to dev
+    path:
+      - 'app/**'
+      - 'infrastructure/**'
   workflow_dispatch:  # Allow manual triggers
     inputs:
       environment:
