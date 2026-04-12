@@ -102,13 +102,14 @@ resource "aws_lambda_function_url" "api" {
   cors {
     allow_credentials = true
     allow_origins     = ["*"]
-    # FIX: Change these to lowercase to satisfy the AWS API constraint
-    allow_methods     = ["get", "post", "options"]
+    # Revert to UPPERCASE; ensure no extra spaces or hidden characters
+    allow_methods     = ["GET", "POST", "OPTIONS"]
     allow_headers     = ["content-type", "x-amz-date", "authorization"]
     expose_headers    = ["date"]
     max_age           = 86400
   }
 }
+
 # 1. Create the KMS Key for CloudWatch Logs encryption
 resource "aws_kms_key" "logs" {
   description             = "KMS key for Genesis API CloudWatch Logs"
@@ -162,7 +163,7 @@ resource "aws_kms_alias" "logs" {
 # semgrep-skip-line: terraform.aws.security.aws-cloudwatch-log-group-unencrypted
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/aws/lambda/${aws_lambda_function.api.function_name}"
-  retention_in_days = var.environment == "prod" ? 30 : 7
+  retention_in_days = var.environment == "prod" ? 365 : 7
   
   # Attach the KMS Key ARN here
   kms_key_id        = aws_kms_key.logs.arn

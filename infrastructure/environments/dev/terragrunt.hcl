@@ -68,6 +68,26 @@ provider "aws" {
 EOF
 }
 
+# Generate Version Constraints (Fixes TFLint Warnings)
+generate "versions" {
+  path      = "versions.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<EOF
+terraform {
+  # Resolves: terraform "required_version" attribute is required
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      # Resolves: Missing version constraint for provider "aws"
+      version = "~> 5.0" 
+    }
+  }
+}
+EOF
+}
+
 # Common and environment-specific inputs
 inputs = {
   aws_region = "us-east-1"
