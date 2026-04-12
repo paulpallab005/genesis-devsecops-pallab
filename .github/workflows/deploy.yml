@@ -142,7 +142,7 @@ jobs:
 
       - name: Terragrunt Init
         working-directory: infrastructure/environments/${{ env.ENVIRONMENT }}
-        run: terragrunt run-all init --terragrunt-non-interactive
+        run: terragrunt run-all init --terragrunt-non-interactive --terragrunt-parallelism 1
 
       - name: Terragrunt Plan
         working-directory: infrastructure/environments/${{ env.ENVIRONMENT }}
