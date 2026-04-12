@@ -30,6 +30,22 @@ provider "aws" {
 EOF
 }
 
+generate "versions" {
+  path      = "versions.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<EOF
+terraform {
+  required_version = ">= 1.5.0" # Prevents state locking by old versions
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0" # Prevents breaking changes from provider updates
+    }
+  }
+}
+EOF
+}
+
 # Generate a versions block to satisfy TFLint version constraints
 generate "versions" {
   path      = "versions.tf"
