@@ -97,18 +97,18 @@ resource "aws_lambda_function" "api" {
 # ------------------------------------------------------------------------------
 resource "aws_lambda_function_url" "api" {
   function_name      = aws_lambda_function.api.function_name
-  authorization_type = "AWS_IAM" # Enforces secure OIDC-signed access
+  authorization_type = "AWS_IAM"
 
   cors {
     allow_credentials = true
     allow_origins     = ["*"]
-    allow_methods     = ["GET", "POST", "OPTIONS"]
+    # FIX: Change these to lowercase to satisfy the AWS API constraint
+    allow_methods     = ["get", "post", "options"]
     allow_headers     = ["content-type", "x-amz-date", "authorization"]
     expose_headers    = ["date"]
     max_age           = 86400
   }
 }
-
 # 1. Create the KMS Key for CloudWatch Logs encryption
 resource "aws_kms_key" "logs" {
   description             = "KMS key for Genesis API CloudWatch Logs"
