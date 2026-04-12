@@ -4,13 +4,9 @@
 # - Lambda function with container image
 # - Lambda function URL for HTTP access
 
-# Data sources
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
-
 # ECR Repository for container images
-# checkov:skip=CKV_AWS_136:Using AWS-managed encryption (AES256) is sufficient for dev environment. Customer-managed KMS adds cost without security benefit for non-sensitive container images.
-# checkov:skip=CKV_AWS_51:Image tag mutability set to MUTABLE for dev environment to allow rapid iteration. Production should use IMMUTABLE.
+# checkov:skip=CKV_AWS_51: "ECR tag immutability is disabled to allow 'latest' tag updates in dev"
+# checkov:skip=CKV_AWS_19: "KMS encryption not required for dev ECR; AES256 is sufficient"
 resource "aws_ecr_repository" "app" {
   name                 = "${var.project}-${var.environment}"
   image_tag_mutability = "MUTABLE"
@@ -55,11 +51,8 @@ resource "aws_ecr_lifecycle_policy" "app" {
 }
 
 # Lambda Function
-# checkov:skip=CKV_AWS_50:X-Ray tracing disabled to minimize costs in dev. Enable in production for distributed tracing.
-# checkov:skip=CKV_AWS_117:Lambda intentionally NOT in VPC - no private resources to access (RDS, ElastiCache). VPC adds NAT Gateway cost (~$32/month) and complexity without security benefit.
-# checkov:skip=CKV_AWS_115:Dead letter queue intentionally omitted - will be enforced via custom OPA policy for production. Assessment specifically tests this as bonus policy.
-# checkov:skip=CKV_AWS_173:Environment variables do not contain secrets - only non-sensitive config (ENVIRONMENT, LOG_LEVEL). Secrets fetched from Secrets Manager at runtime.
-# checkov:skip=CKV_AWS_272:Reserved concurrent execution limit set (5 for dev, 10 for prod) - provides cost control while allowing reasonable concurrency.
+# checkov:skip=CKV_AWS_116: "DLQ not required for this synchronous API implementation"
+# checkov:skip=CKV_AWS_173: "KMS encryption for env vars not required; default AWS-managed keys used"
 resource "aws_lambda_function" "api" {
   function_name = "${var.project}-${var.environment}-api"
   role          = var.lambda_execution_role_arn
@@ -76,12 +69,12 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = {
       ENVIRONMENT = var.environment
-      AWS_REGION  = var.aws_region
       LOG_LEVEL   = var.environment == "prod" ? "INFO" : "DEBUG"
     }
   }
 
   kms_key_arn = null 
+  reserved_concurrent_executions = null
 
   # DELETE OR COMMENT THIS LINE OUT:
   # reserved_concurrent_executions = var.environment == "prod" ? 10 : 5 
