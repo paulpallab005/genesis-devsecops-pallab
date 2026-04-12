@@ -1,9 +1,5 @@
 name: Security Scan (Reusable Workflow)
 
-# Reusable workflow for security scanning (Stages 1-4)
-# Called by ci.yml to demonstrate platform engineering pattern
-# where security standards are shared across multiple repositories
-
 on:
   workflow_call:
     inputs:
@@ -19,7 +15,7 @@ on:
         default: '3.11'
 
 jobs:
-  # Stage 1: Secret Scanning with Gitleaks
+  # Stage 1: Secret Scanning
   secret-scanning:
     name: "Stage 1: Secret Scanning (Gitleaks)"
     runs-on: ubuntu-latest
@@ -27,19 +23,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Full history for Gitleaks
+          fetch-depth: 0
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # Optional: for Gitleaks Pro
 
   # Stage 2: Dependency Audit
   dependency-audit:
     name: "Stage 2: Dependency Audit"
     runs-on: ubuntu-latest
-    needs: secret-scanning  # Fail-fast: only run if secrets check passes
+    needs: secret-scanning
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -51,6 +46,9 @@ jobs:
 
       - name: Install pip-audit
         run: pip install pip-audit
+
+      - name: Create Reports Directory
+        run: mkdir -p reports  # Fix: Ensure directory exists
 
       - name: Run pip-audit (JSON report)
         working-directory: app
@@ -72,7 +70,7 @@ jobs:
   sast:
     name: "Stage 3: SAST (Semgrep)"
     runs-on: ubuntu-latest
-    needs: dependency-audit  # Sequential dependency
+    needs: dependency-audit
     permissions:
       contents: read
       security-events: write
@@ -84,11 +82,11 @@ jobs:
       - name: Run Semgrep
         uses: returntocorp/semgrep-action@v1
         with:
-          config: auto  # Auto-detect rules based on language
-          generateSarif: true
+          config: auto
+          generateSarif: "1" # Fix: Use "1" for older action compatibility
 
       - name: Upload SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4 # Fix: Updated to v4
         with:
           sarif_file: semgrep.sarif
         if: always()
@@ -97,7 +95,7 @@ jobs:
   tests-and-coverage:
     name: "Stage 4: Unit Tests + Coverage"
     runs-on: ubuntu-latest
-    needs: sast  # Sequential dependency
+    needs: sast
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -112,32 +110,30 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pytest pytest-cov # Ensure test tools are present
 
       - name: Run tests with coverage
         working-directory: app
-        run: pytest --cov=. --cov-report=term --cov-report=xml --cov-report=html -v
+        run: pytest --cov=. --cov-report=xml:coverage.xml --cov-report=term -v
 
       - name: Check coverage threshold
         working-directory: app
         run: |
-          COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(float(root.attrib['line-rate']) * 100)")
-          echo "Coverage: $COVERAGE%"
-          if (( $(echo "$COVERAGE < ${{ inputs.coverage_threshold }}" | bc -l) )); then
-            echo "❌ Coverage $COVERAGE% is below threshold ${{ inputs.coverage_threshold }}%"
-            exit 1
-          fi
-          echo "✅ Coverage $COVERAGE% meets threshold ${{ inputs.coverage_threshold }}%"
+          # Robust coverage check using python
+          python -c "
+          import xml.etree.ElementTree as ET
+          tree = ET.parse('coverage.xml')
+          root = tree.getroot()
+          line_rate = float(root.attrib['line-rate']) * 100
+          print(f'Coverage: {line_rate}%')
+          if line_rate < ${{ inputs.coverage_threshold }}:
+              print('❌ Below threshold')
+              exit(1)
+          "
 
       - name: Upload coverage reports
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: app/htmlcov/
+          path: app/coverage.xml
           retention-days: 30
-
-      - name: Generate coverage badge
-        working-directory: app
-        run: |
-          COVERAGE=$(python -c "import xml.etree.ElementTree as ET; tree = ET.parse('coverage.xml'); root = tree.getroot(); print(int(float(root.attrib['line-rate']) * 100))")
-          echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
-          echo "Coverage: $COVERAGE%"
