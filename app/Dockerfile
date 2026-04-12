@@ -1,7 +1,12 @@
 # Stage 1: Builder
 FROM python:3.11-slim-bookworm AS builder
 WORKDIR /build
-RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && rm -rf /var/lib/apt/lists/*
+
+# Update and upgrade to patch known vulnerabilities
+RUN apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
@@ -9,9 +14,10 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 FROM python:3.11-slim-bookworm
 WORKDIR /app
 
-# Upgrade system packages to resolve Trivy findings
+# Crucial: Patch OS-level vulnerabilities found by Trivy
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
+# Copy the Lambda adapter and your app code
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:0.8.4 /lambda-adapter /opt/extensions/lambda-adapter
 COPY --from=builder /install /usr/local
 COPY main.py .
