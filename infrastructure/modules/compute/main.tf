@@ -110,11 +110,11 @@ resource "aws_lambda_function_url" "api" {
 
 # Allow public access to Lambda Function URL
 resource "aws_lambda_permission" "allow_function_url" {
-  statement_id       = "AllowFunctionUrlInvoke"
-  action             = "lambda:InvokeFunctionUrl"
-  function_name      = aws_lambda_function.api.function_name
-  principal          = "*"
-  source_arn         = "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function-url/${aws_lambda_function.api.function_name}/*"
+  statement_id           = "AllowFunctionUrlInvoke"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.api.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE" # Explicitly match the URL auth type
 }
 
 # CloudWatch Log Group for Lambda (explicit creation for control)
