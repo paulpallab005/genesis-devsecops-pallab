@@ -69,7 +69,6 @@ resource "aws_lambda_function" "api" {
   memory_size = var.lambda_memory_size
   timeout     = var.lambda_timeout
 
-  # FIX 1: Enable Active X-Ray Tracing to resolve Semgrep/Checkov findings
   tracing_config {
     mode = "Active"
   }
@@ -77,16 +76,15 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = {
       ENVIRONMENT = var.environment
+      AWS_REGION  = var.aws_region
       LOG_LEVEL   = var.environment == "prod" ? "INFO" : "DEBUG"
     }
   }
 
-  # FIX 2: Explicitly acknowledge encryption
-  # Note: AWS Lambda encrypts environment variables at rest by default.
-  # Providing a null KMS key arn satisfies scanners requiring the attribute to be defined.
   kms_key_arn = null 
 
-  reserved_concurrent_executions = var.environment == "prod" ? 10 : 5
+  # DELETE OR COMMENT THIS LINE OUT:
+  # reserved_concurrent_executions = var.environment == "prod" ? 10 : 5 
 
   tags = {
     Name        = "${var.project}-${var.environment}-lambda"
