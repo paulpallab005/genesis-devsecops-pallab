@@ -31,11 +31,11 @@ output "lambda_function_url" {
 }
 
 output "lambda_log_group_name" {
-  description = "The name of the CloudWatch Log Group"
-  value       = aws_cloudwatch_log_group.api.name
+  description = "Name of the CloudWatch log group for Lambda logs"
+  value       = aws_cloudwatch_log_group.lambda.name
 }
 
 output "lambda_log_group_arn" {
-  description = "The ARN of the CloudWatch Log Group"
-  value       = aws_cloudwatch_log_group.api.arn
+  description = "ARN of the CloudWatch log group"
+  value       = aws_cloudwatch_log_group.lambda.arn
 }

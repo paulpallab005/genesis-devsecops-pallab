@@ -1,10 +1,9 @@
 # Compute Module Variables
 
 variable "aws_region" {
-  description = "AWS region to deploy resources"
+  description = "AWS region where resources will be created"
   type        = string
   default     = "us-east-1"
-  
 }
 
 variable "environment" {
@@ -61,4 +60,3 @@ variable "image_tag" {
   type        = string
   default     = "latest"
 }
-
