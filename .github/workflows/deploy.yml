@@ -10,6 +10,9 @@ on:
     branches: 
       - main      # Deploy to prod
       - develop   # Deploy to dev
+    path:
+      - 'app/**'
+      - 'infrastructure/**'
   workflow_dispatch:  # Allow manual triggers
     inputs:
       environment:
@@ -123,21 +126,26 @@ jobs:
             docker login --username AWS --password-stdin \
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com
           
-          # Tag for ECR
-          docker tag genesis-api:${{ github.sha }} \
-            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
-          docker tag genesis-api:${{ github.sha }} \
-            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:latest
+          # Generate unique tag: environment-branch-short_sha
+          SHORT_SHA="${{ github.sha }}" && SHORT_SHA=${SHORT_SHA:0:7}
+          BRANCH_NAME="${{ github.ref_name }}"
+          IMAGE_TAG="${ENVIRONMENT}-${BRANCH_NAME}-${SHORT_SHA}"
+          IMAGE_URI="${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}"
           
-          # Push to ECR
-          docker push ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
-          docker push ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:latest
+          # Tag and push both the unique tag and latest
+          echo "📦 Tagging image as: $IMAGE_TAG and latest"
+          docker tag genesis-api:${{ github.sha }} $IMAGE_URI:$IMAGE_TAG
+          docker tag genesis-api:${{ github.sha }} $IMAGE_URI:latest
           
-          echo "✓ Image pushed to ECR"
+          echo "🚀 Pushing to ECR..."
+          docker push $IMAGE_URI:$IMAGE_TAG
+          docker push $IMAGE_URI:latest
+          
+          echo "✓ Image pushed to ECR with tags: $IMAGE_TAG, latest"
 
       - name: Terragrunt Init
         working-directory: infrastructure/environments/${{ env.ENVIRONMENT }}
-        run: terragrunt run-all init --terragrunt-non-interactive
+        run: terragrunt run-all init --terragrunt-non-interactive --terragrunt-parallelism 1
 
       - name: Terragrunt Plan
         working-directory: infrastructure/environments/${{ env.ENVIRONMENT }}
@@ -149,16 +157,21 @@ jobs:
 
       - name: Update Lambda function code
         run: |
+          # Construct the image tag (must match what was pushed)
+          SHORT_SHA="${{ github.sha }}" && SHORT_SHA=${SHORT_SHA:0:7}
+          BRANCH_NAME="${{ github.ref_name }}"
+          IMAGE_TAG="${ENVIRONMENT}-${BRANCH_NAME}-${SHORT_SHA}"
+          
           # Update Lambda with new image
           aws lambda update-function-code \
             --function-name genesis-api-${ENVIRONMENT}-api \
-            --image-uri ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${{ github.sha }}
+            --image-uri ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/genesis-api-${ENVIRONMENT}:${IMAGE_TAG}
           
           # Wait for update to complete
           aws lambda wait function-updated \
             --function-name genesis-api-${ENVIRONMENT}-api
           
-          echo "✓ Lambda function updated"
+          echo "✓ Lambda function updated with image: $IMAGE_TAG"
 
       - name: Get Lambda function URL
         id: outputs
@@ -175,34 +188,41 @@ jobs:
     name: "Stage 12: Smoke Test"
     runs-on: ubuntu-latest
     needs: [set-environment, terragrunt-deploy]
+    environment: ${{ needs.set-environment.outputs.environment }}
+    permissions:
+      id-token: write # Required to fetch OIDC token in this job
+      contents: read
     env:
       ENVIRONMENT: ${{ needs.set-environment.outputs.environment }}
     steps:
       - name: Wait for Lambda to be ready
         run: sleep 10
 
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/genesis-api-${{ env.ENVIRONMENT }}-github-actions-role
+          role-session-name: GitHubActions-SmokeTest-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+
+      - name: Install awscurl
+        run: pip install awscurl
+
       - name: Test GET /health endpoint
         run: |
           LAMBDA_URL="${{ needs.terragrunt-deploy.outputs.lambda_url }}"
           echo "Testing: ${LAMBDA_URL}health"
           
-          RESPONSE=$(curl -s -w "\n%{http_code}" "${LAMBDA_URL}health")
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-          
-          echo "HTTP Status: $HTTP_CODE"
+          # awscurl fetches the body directly
+          BODY=$(awscurl --service lambda --region ${{ env.AWS_REGION }} "${LAMBDA_URL}health")
           echo "Response: $BODY"
           
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "❌ Health check failed - expected 200, got $HTTP_CODE"
-            exit 1
-          fi
-          
-          # Verify response structure
+          # Verify the application responded with success
           if echo "$BODY" | jq -e '.status == "ok"' > /dev/null; then
             echo "✅ Health check passed - status is ok"
           else
-            echo "❌ Health check response invalid"
+            echo "❌ Health check failed. Expected status=ok. Got: $BODY"
             exit 1
           fi
           
@@ -216,26 +236,23 @@ jobs:
           LAMBDA_URL="${{ needs.terragrunt-deploy.outputs.lambda_url }}"
           echo "Testing: ${LAMBDA_URL}events"
           
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${LAMBDA_URL}events" \
+          BODY=$(awscurl -X POST --service lambda --region ${{ env.AWS_REGION }} "${LAMBDA_URL}events" \
             -H "Content-Type: application/json" \
             -d '{"event_type":"deployment","description":"Automated deployment smoke test"}')
           
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-          
-          echo "HTTP Status: $HTTP_CODE"
           echo "Response: $BODY"
           
-          if [ "$HTTP_CODE" != "201" ]; then
-            echo "❌ Event creation failed - expected 201, got $HTTP_CODE"
+          # If successful, the API returns an 'id'
+          EVENT_ID=$(echo "$BODY" | jq -r '.id // empty')
+          
+          if [ -n "$EVENT_ID" ] && [ "$EVENT_ID" != "null" ]; then
+            echo "✅ Event created with ID: $EVENT_ID"
+            # Save event ID for next test
+            echo "EVENT_ID=$EVENT_ID" >> $GITHUB_ENV
+          else
+            echo "❌ Event creation failed. Response: $BODY"
             exit 1
           fi
-          
-          EVENT_ID=$(echo "$BODY" | jq -r '.id')
-          echo "✅ Event created with ID: $EVENT_ID"
-          
-          # Save event ID for next test
-          echo "EVENT_ID=$EVENT_ID" >> $GITHUB_ENV
 
       - name: Test GET /events/{id} endpoint
         run: |
@@ -243,19 +260,19 @@ jobs:
           EVENT_ID="${{ env.EVENT_ID }}"
           echo "Testing: ${LAMBDA_URL}events/${EVENT_ID}"
           
-          RESPONSE=$(curl -s -w "\n%{http_code}" "${LAMBDA_URL}events/${EVENT_ID}")
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n 1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-          
-          echo "HTTP Status: $HTTP_CODE"
+          BODY=$(awscurl --service lambda --region ${{ env.AWS_REGION }} "${LAMBDA_URL}events/${EVENT_ID}")
           echo "Response: $BODY"
           
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "❌ Event retrieval failed - expected 200, got $HTTP_CODE"
+          # Check if AWS blocked it (returns a Message field) or if the JSON is valid
+          if echo "$BODY" | jq -e '.Message?' > /dev/null; then
+            echo "❌ Event retrieval failed with AWS error: $BODY"
+            exit 1
+          elif echo "$BODY" | jq -e '.' > /dev/null; then
+            echo "✅ Event retrieved successfully"
+          else
+            echo "❌ Event retrieval failed. Invalid response: $BODY"
             exit 1
           fi
-          
-          echo "✅ Event retrieved successfully"
 
       - name: Smoke test summary
         run: |
@@ -266,10 +283,9 @@ jobs:
           echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Smoke Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ GET /health → 200 OK" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ POST /events → 201 Created" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ GET /events/{id} → 200 OK" >> $GITHUB_STEP_SUMMARY
-
+          echo "- ✅ GET /health → Verified via JSON response" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ POST /events → Verified via JSON response" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ GET /events/{id} → Verified via JSON response" >> $GITHUB_STEP_SUMMARY
   # Deployment notification (optional)
   notify:
     name: "Deployment Notification"

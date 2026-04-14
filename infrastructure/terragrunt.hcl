@@ -1,50 +1,58 @@
-# Terragrunt root configuration
-# This file defines common settings inherited by all child configurations
+# Root terragrunt.hcl
 
-# Configure remote state backend
-remote_state {
-  backend = "s3"
+locals {
+  # Load environment-level variables
+  env_vars = read_terragrunt_config(find_in_parent_folders("env.hcl"))
   
-  config = {
-    bucket         = "genesis-terraform-state-${get_aws_account_id()}"
-    key            = "${path_relative_to_include()}/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "genesis-terraform-locks"
-    
-    # S3 bucket security settings
-    s3_bucket_tags = {
-      Name        = "genesis-terraform-state"
-      Environment = "shared"
-      ManagedBy   = "terragrunt"
-      Project     = "genesis-api"
-      Owner       = "pallab"
-    }
-    
-    dynamodb_table_tags = {
-      Name        = "genesis-terraform-locks"
-      Environment = "shared"
-      ManagedBy   = "terragrunt"
-      Project     = "genesis-api"
-      Owner       = "pallab"
-    }
-  }
-  
-  generate = {
-    path      = "backend.tf"
-    if_exists = "overwrite_terragrunt"
-  }
+  # Extract out common variables for reuse
+  project     = "genesis-api"
+  environment = local.env_vars.locals.environment
+  aws_region  = local.env_vars.locals.aws_region
 }
 
-# Generate provider configuration
+# Generate an AWS provider block
+# This prevents the "Duplicate required providers" error by centralizing the config
 generate "provider" {
   path      = "provider.tf"
   if_exists = "overwrite_terragrunt"
-  
-  contents = <<EOF
+  contents  = <<EOF
+provider "aws" {
+  region = "${local.aws_region}"
+
+  default_tags {
+    tags = {
+      Project     = "${local.project}"
+      Environment = "${local.environment}"
+      ManagedBy   = "terragrunt"
+    }
+  }
+}
+EOF
+}
+
+generate "versions" {
+  path      = "versions.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<EOF
+terraform {
+  required_version = ">= 1.5.0" # Prevents state locking by old versions
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0" # Prevents breaking changes from provider updates
+    }
+  }
+}
+EOF
+}
+
+# Generate a versions block to satisfy TFLint version constraints
+generate "versions" {
+  path      = "versions.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<EOF
 terraform {
   required_version = ">= 1.5.0"
-  
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -52,25 +60,29 @@ terraform {
     }
   }
 }
-
-provider "aws" {
-  region = var.aws_region
-  
-  default_tags {
-    tags = {
-      ManagedBy   = "terragrunt"
-      Project     = "genesis-api"
-      Owner       = "pallab"
-      Environment = var.environment
-    }
-  }
-}
 EOF
 }
 
-# Common input variables available to all modules
-inputs = {
-  aws_region = "us-east-1"
-  project    = "genesis-api"
-  owner      = "pallab"
+# Configure Terragrunt to automatically store tfstate in S3
+remote_state {
+  backend = "s3"
+  config = {
+    encrypt        = true
+    bucket         = "genesis-terraform-state-${get_aws_account_id()}"
+    key            = "${path_relative_to_include()}/terraform.tfstate"
+    region         = local.aws_region
+    dynamodb_table = "genesis-terraform-locks"
+  }
+  generate = {
+    path      = "backend.tf"
+    if_exists = "overwrite_terragrunt"
+  }
 }
+
+# Combine all variables to be passed to all modules
+inputs = merge(
+  local.env_vars.locals,
+  {
+    project = local.project
+  }
+)
